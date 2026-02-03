@@ -130,11 +130,18 @@ class LP_Addon_WayForPay_Preload
 		// Handle Submit
 		if (isset($_GET['lp-wayforpay-submit']) && !empty($_GET['lp-wayforpay-submit'])) {
 			$order_id = absint($_GET['lp-wayforpay-submit']);
+			$nonce = sanitize_text_field($_GET['nonce'] ?? '');
+
 			if ($order_id <= 0) {
-				wp_die(__('Invalid order ID', 'learnpress-wayforpay'));
+				wp_die(__('Invalid order ID', 'learnpress-wayforpay'), 'Error', array('response' => 400));
 			}
+
+			if (empty($nonce)) {
+				wp_die(__('Missing security token', 'learnpress-wayforpay'), 'Security Error', array('response' => 403));
+			}
+
 			$gateway = new LP_Gateway_WayForPay();
-			$gateway->process_wayforpay_submit($order_id);
+			$gateway->process_wayforpay_submit($order_id, $nonce);
 			exit;
 		}
 
