@@ -121,27 +121,30 @@ class LP_Addon_WayForPay_Preload
     /**
      * Handle Requests (Submit / Callback).
      */
-    public function handle_request()
-    {
-        if (!class_exists('LP_Gateway_WayForPay')) {
-            return;
-        }
+	public function handle_request()
+	{
+		if (!class_exists('LP_Gateway_WayForPay')) {
+			return;
+		}
 
-        // Handle Submit
-        if (isset($_GET['lp-wayforpay-submit']) && !empty($_GET['lp-wayforpay-submit'])) {
-            $order_id = absint($_GET['lp-wayforpay-submit']);
-            $gateway = new LP_Gateway_WayForPay();
-            $gateway->process_wayforpay_submit($order_id);
-            exit;
-        }
+		// Handle Submit
+		if (isset($_GET['lp-wayforpay-submit']) && !empty($_GET['lp-wayforpay-submit'])) {
+			$order_id = absint($_GET['lp-wayforpay-submit']);
+			if ($order_id <= 0) {
+				wp_die(__('Invalid order ID', 'learnpress-wayforpay'));
+			}
+			$gateway = new LP_Gateway_WayForPay();
+			$gateway->process_wayforpay_submit($order_id);
+			exit;
+		}
 
-        // Handle Callback
-        if (isset($_GET['lp-wayforpay-callback'])) {
-            $gateway = new LP_Gateway_WayForPay();
-            $gateway->handle_wayforpay_callback();
-            exit;
-        }
-    }
+		// Handle Callback
+		if (isset($_GET['lp-wayforpay-callback'])) {
+			$gateway = new LP_Gateway_WayForPay();
+			$gateway->handle_wayforpay_callback();
+			exit;
+		}
+	}
 
     /**
      * Show error notice.

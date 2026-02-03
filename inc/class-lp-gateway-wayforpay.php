@@ -324,49 +324,82 @@ if (!class_exists('LP_Gateway_WayForPay')) {
         /**
          * Handle Callback from WayForPay.
          */
-        public function handle_wayforpay_callback()
-        {
-            $data = json_decode(file_get_contents('php://input'), true);
+	    public function handle_wayforpay_callback()
+	    {
+		    $data = json_decode(file_get_contents('php://input'), true);
 
-            if (!$data) {
-                wp_die('No data', 'WayForPay');
-            }
+		    if (!$data) {
+			    // Try POST fallback
+			    $data = $_POST;
+		    }
 
-            // Validate Signature
-            $received_signature = $data['merchantSignature'] ?? '';
-            $check_fields = array('merchantAccount', 'orderReference', 'amount', 'currency', 'authCode', 'cardPan', 'transactionStatus', 'reasonCode');
+		    if (empty($data)) {
+			    wp_die('No data', 'WayForPay', 400);
+		    }
 
-            $hash = array();
-            foreach ($check_fields as $key) {
-                if (isset($data[$key])) {
-                    $hash[] = $data[$key];
-                }
-            }
-            $string = implode(';', $hash);
-            $my_signature = hash_hmac('md5', $string, $this->secret_key);
+		    // Validate Signature
+		    $received_signature = $data['merchantSignature'] ?? '';
 
-            if ($received_signature !== $my_signature) {
-                $this->response_to_gateway($data['orderReference'], 'accept'); // Signature mismatch, but maybe just log it. 
-                wp_die('Invalid Signature');
-            }
+		    // According to WayForPay docs, response signature uses these fields
+		    $sign_fields = array(
+			    'merchantAccount',
+			    'orderReference',
+			    'amount',
+			    'currency'
+		    );
 
-            // Get Order ID
-            $parts = explode('_', $data['orderReference']);
-            $order_id = $parts[0]; // Assuming format ORDERID_lp_TIME
-            $order = learn_press_get_order($order_id);
+		    // Add additional fields based on transaction status
+		    if (!empty($data['authCode'])) {
+			    $sign_fields[] = 'authCode';
+		    }
+		    if (!empty($data['cardPan'])) {
+			    $sign_fields[] = 'cardPan';
+		    }
+		    if (!empty($data['transactionStatus'])) {
+			    $sign_fields[] = 'transactionStatus';
+		    }
+		    if (!empty($data['reasonCode'])) {
+			    $sign_fields[] = 'reasonCode';
+		    }
 
-            if (!$order) {
-                wp_die('Order not found');
-            }
+		    $hash = array();
+		    foreach ($sign_fields as $key) {
+			    if (isset($data[$key])) {
+				    $hash[] = $data[$key];
+			    }
+		    }
 
-            if ($data['transactionStatus'] === 'Approved') {
-                // Payment Success
-                $order->payment_complete($data['orderReference']);
-                $order->update_status('completed'); // Payment received via WayForPay
-            }
+		    $string = implode(';', $hash);
+		    $my_signature = hash_hmac('md5', $string, $this->secret_key);
 
-            $this->response_to_gateway($data['orderReference'], 'accept');
-        }
+		    if ($received_signature !== $my_signature) {
+			    error_log('WayForPay signature mismatch: ' . print_r($data, true));
+			    wp_die('Invalid Signature', 'WayForPay', 403);
+		    }
+
+		    // Get Order ID
+		    $parts = explode('_', $data['orderReference'] ?? '');
+		    $order_id = absint($parts[0]);
+		    $order = learn_press_get_order($order_id);
+
+		    if (!$order) {
+			    $this->response_to_gateway($data['orderReference'], 'decline');
+			    wp_die('Order not found', 'WayForPay', 404);
+		    }
+
+		    if (isset($data['transactionStatus']) && $data['transactionStatus'] === 'Approved') {
+			    // Payment Success
+			    $order->payment_complete($data['orderReference'] ?? '');
+			    // Don't force 'completed' - let LearnPress handle the order status
+			    $order->add_note(sprintf(__('WayForPay payment approved. Transaction ID: %s', 'learnpress-wayforpay'), $data['orderReference'] ?? ''));
+		    } else {
+			    // Payment failed or declined
+			    $reason = $data['reason'] ?? __('Unknown reason', 'learnpress-wayforpay');
+			    $order->update_status('failed', sprintf(__('WayForPay payment failed: %s', 'learnpress-wayforpay'), $reason));
+		    }
+
+		    $this->response_to_gateway($data['orderReference'], 'accept');
+	    }
 
         /**
          * Send response back to WayForPay.
@@ -383,7 +416,8 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                 'time' => $time,
             );
 
-            $sign_string = implode(';', $response);
+            // Add secret key to signature string
+            $sign_string = $order_ref . ';' . $status . ';' . $time . ';' . $this->secret_key;
             $response['signature'] = hash_hmac('md5', $sign_string, $this->secret_key);
 
             echo json_encode($response);
