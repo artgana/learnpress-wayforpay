@@ -1,0 +1,105 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: LearnPress - WayForPay Payment 4.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-02-10 12:00+0000\n"
+"PO-Revision-Date: 2025-02-10 12:00+0000\n"
+"Language-Team: \n"
+"Language: uk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Domain: learnpress-wayforpay\n"
+
+msgid "Pay with WayForPay"
+msgstr "Оплата через WayForPay"
+
+msgid "Pay securely via WayForPay."
+msgstr "Безпечна оплата через WayForPay."
+
+msgid "WayForPay Settings"
+msgstr "Налаштування WayForPay"
+
+msgid "Enable/Disable"
+msgstr "Увімкнути/Вимкнути"
+
+msgid "Enable WayForPay payment"
+msgstr "Увімкнути оплату WayForPay"
+
+msgid "Title"
+msgstr "Назва"
+
+msgid "Description"
+msgstr "Опис"
+
+msgid "Merchant Account"
+msgstr "Аккаунт мерчанта"
+
+msgid "Your WayForPay Merchant Account ID."
+msgstr "Ваш ID аккаунта мерчанта WayForPay."
+
+msgid "Secret Key"
+msgstr "Секретний ключ"
+
+msgid "Your WayForPay Secret Key."
+msgstr "Ваш секретний ключ WayForPay."
+
+msgid "Order Timeout"
+msgstr "Тайм-аут замовлення"
+
+msgid "Time in seconds before the order expires (default: 49000)."
+msgstr "Час у секундах до закінчення терміну дії замовлення (за замовчуванням: 49000)."
+
+msgid "Debug Mode"
+msgstr "Режим налагодження"
+
+msgid "Enable debug logging (logs will be saved to WordPress debug.log)."
+msgstr "Увімкнути логування налагодження (логи будуть збережені у WordPress debug.log)."
+
+msgid "Supported currencies: %s"
+msgstr "Валюти, що підтримуються: %s"
+
+msgid "Order not found"
+msgstr "Замовлення не знайдено"
+
+msgid "Currency %s is not supported by WayForPay."
+msgstr "Валюта %s не підтримується WayForPay."
+
+msgid "Security check failed"
+msgstr "Перевірка безпеки не вдалася"
+
+msgid "Invalid Order"
+msgstr "Некоректне замовлення"
+
+msgid "Course"
+msgstr "Курс"
+
+msgid "Order %s"
+msgstr "Замовлення %s"
+
+msgid "WayForPay payment approved. Transaction ID: %s, Amount: %s %s"
+msgstr "Оплата WayForPay схвалена. ID транзакції: %s, Сума: %s %s"
+
+msgid "Unknown reason"
+msgstr "Невідома причина"
+
+msgid "WayForPay payment failed. Status: %s, Reason: %s (Code: %s)"
+msgstr "Помилка оплати WayForPay. Статус: %s, Причина: %s (Код: %s)"
+
+msgid "Invalid order ID"
+msgstr "Некоректний ID замовлення"
+
+msgid "Missing security token"
+msgstr "Відсутній токен безпеки"
+
+msgid "Redirecting to Payment..."
+msgstr "Перенаправлення на оплату..."
+
+msgid "Please wait, redirecting to payment gateway..."
+msgstr "Будь ласка, зачекайте, перенаправлення на платіжний шлюз..."
+
+msgid "If you are not redirected automatically, please click the button below."
+msgstr "Якщо вас не перенаправлено автоматично, натисніть кнопку нижче."
+
+msgid "Continue to Payment"
+msgstr "Продовжити оплату"

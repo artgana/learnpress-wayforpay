@@ -9,7 +9,8 @@
  * Require_LP_Version: 4.0.0
  * Requires at least: 6.3
  * Requires PHP: 7.4
- *
+ * License: GNU General Public License v2.0
+ * License URI: http://www.gnu.org/licenses/gpl-2.0.html
  * @package learnpress-wayforpay
  */
 
@@ -88,6 +89,15 @@ class LP_Addon_WayForPay_Preload
 
         // Load Addon
         add_action('learn-press/ready', array($this, 'load'));
+        add_action('plugins_loaded', array($this, 'load_textdomain'));
+    }
+
+    /**
+     * Load textdomain.
+     */
+    public function load_textdomain()
+    {
+        load_plugin_textdomain('learnpress-wayforpay', false, dirname(plugin_basename(__FILE__)) . '/languages');
     }
 
     /**
