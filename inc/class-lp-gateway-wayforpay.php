@@ -47,8 +47,9 @@ if (!class_exists('LP_Gateway_WayForPay')) {
 
         /**
          * @var array Supported currencies
+         * For example: array('UAH', 'USD', 'EUR')
          */
-        protected $supported_currencies = array('UAH', 'USD', 'EUR');
+        protected $supported_currencies = array('UAH');
 
         /**
          * Constructor.
@@ -165,13 +166,15 @@ if (!class_exists('LP_Gateway_WayForPay')) {
          */
         public function get_payment_form()
         {
-            $currency = strtoupper(learn_press_get_currency());
+            /*
+			$currency = strtoupper(learn_press_get_currency());
             $supported_text = sprintf(
                     __('Supported currencies: %s', 'learnpress-wayforpay'),
                     implode(', ', $this->supported_currencies)
             );
 
-            return wpautop($this->description) . '<p><small>' . esc_html($supported_text) . '</small></p>';
+            return wpautop($this->description) . '<p><small>' . esc_html($supported_text) . '</small></p>'; */
+            return wpautop($this->description);
         }
 
         /**
