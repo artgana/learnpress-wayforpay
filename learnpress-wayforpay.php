@@ -2,9 +2,9 @@
 /**
  * Plugin Name: LearnPress - WayForPay Payment
  * Plugin URI: https://github.com/artgana/learnpress-wayforpay
- * Description: WayForPay payment gateway for LearnPress.
+ * Description: WayForPay payment gateway for LearnPress, with coupon-aware checkout totals and refund support.
  * Author: artgana
- * Version: 4.0.0
+ * Version: 4.1.0
  * Text Domain: learnpress-wayforpay
  * Require_LP_Version: 4.0.0
  * Requires at least: 6.3

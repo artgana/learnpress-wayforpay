@@ -259,10 +259,44 @@ if (!class_exists('LP_Gateway_WayForPay')) {
             // Get order items
             $items = $order->get_items();
             if (!empty($items)) {
+                $itemTotals = array();
                 foreach ($items as $item) {
                     $productNames[] = sanitize_text_field($item['name'] ?? __('Course', 'learnpress-wayforpay'));
-                    $productCounts[] = absint($item['quantity'] ?? 1);
-                    $productPrices[] = round(floatval($item['total'] ?? 0), 2);
+                    $productCounts[] = max(1, absint($item['quantity'] ?? 1));
+                    $itemTotals[] = round(floatval($item['total'] ?? 0), 2);
+                }
+
+                // WayForPay requires amount === sum(productPrice * productCount). Item totals
+                // reflect the pre-discount course price, so any coupon/promo that lowers the
+                // order total below the raw subtotal must be prorated across the line items,
+                // otherwise the signature/amount WayForPay receives won't match what we charge.
+                $subtotal = round($order->get_subtotal(), 2);
+                $rawTotalsSum = array_sum($itemTotals);
+                $needsProration = $rawTotalsSum > 0 && abs($rawTotalsSum - $amount) > 0.01;
+
+                if ($needsProration) {
+                    $baseline = $subtotal > 0 ? $subtotal : $rawTotalsSum;
+                    $ratio = $baseline > 0 ? $amount / $baseline : 1;
+                    $lineTotals = array();
+                    $runningSum = 0;
+                    $lastIndex = count($itemTotals) - 1;
+                    foreach ($itemTotals as $i => $rawTotal) {
+                        if ($i === $lastIndex) {
+                            // Last item absorbs any rounding remainder so the sum matches $amount exactly.
+                            $lineTotals[] = round($amount - $runningSum, 2);
+                        } else {
+                            $prorated = round($rawTotal * $ratio, 2);
+                            $lineTotals[] = $prorated;
+                            $runningSum += $prorated;
+                        }
+                    }
+                } else {
+                    $lineTotals = $itemTotals;
+                }
+
+                foreach ($lineTotals as $i => $lineTotal) {
+                    // productPrice is a per-unit price; WayForPay validates productPrice * productCount.
+                    $productPrices[] = round($lineTotal / $productCounts[$i], 2);
                 }
             } else {
                 // Fallback
@@ -480,7 +514,7 @@ if (!class_exists('LP_Gateway_WayForPay')) {
 
             if (!$data) {
                 // Try POST fallback
-                $data = $_POST;
+                $data = wp_unslash($_POST);
             }
 
             if (empty($data)) {
@@ -493,38 +527,31 @@ if (!class_exists('LP_Gateway_WayForPay')) {
             // Validate Signature
             $received_signature = $data['merchantSignature'] ?? '';
 
+            // WayForPay always signs this fixed set of fields in this order, even when a
+            // field is blank (e.g. authCode/cardPan on a declined transaction). Omitting
+            // blank fields - as this used to do - shifts every value after the first gap
+            // and breaks verification for anything but a fully successful, fully-populated
+            // callback, so every field is always included with an empty-string fallback.
             $sign_fields = array(
                 'merchantAccount',
                 'orderReference',
                 'amount',
-                'currency'
+                'currency',
+                'authCode',
+                'cardPan',
+                'transactionStatus',
+                'reasonCode',
             );
-
-            // Add additional fields based on transaction status
-            if (!empty($data['authCode'])) {
-                $sign_fields[] = 'authCode';
-            }
-            if (!empty($data['cardPan'])) {
-                $sign_fields[] = 'cardPan';
-            }
-            if (!empty($data['transactionStatus'])) {
-                $sign_fields[] = 'transactionStatus';
-            }
-            if (!empty($data['reasonCode'])) {
-                $sign_fields[] = 'reasonCode';
-            }
 
             $hash = array();
             foreach ($sign_fields as $key) {
-                if (isset($data[$key])) {
-                    $hash[] = $data[$key];
-                }
+                $hash[] = (string) ($data[$key] ?? '');
             }
 
             $string = implode(';', $hash);
             $my_signature = hash_hmac('md5', $string, $this->secret_key);
 
-            if ($received_signature !== $my_signature) {
+            if (!hash_equals($my_signature, (string) $received_signature)) {
                 $this->log('Signature mismatch. Expected: ' . $my_signature . ', Received: ' . $received_signature);
                 wp_die('Invalid Signature', 'WayForPay', array('response' => 403));
             }
@@ -582,6 +609,122 @@ if (!class_exists('LP_Gateway_WayForPay')) {
             }
 
             $this->response_to_gateway($data['orderReference'], 'accept');
+        }
+
+        /**
+         * Refund an order via WayForPay's REFUND API.
+         *
+         * Called by LP_Order::refund() after its own eligibility checks pass. On
+         * success this must simply return - LearnPress itself marks the order
+         * refunded, records who/when/how much, and adds the order note. On any
+         * failure this must throw, so LearnPress surfaces the reason and leaves
+         * the order status untouched.
+         *
+         * @param LP_Order $lp_order
+         * @param float $amount
+         * @param string $note
+         * @return void
+         * @throws Exception
+         */
+        public function refund($lp_order, float $amount = 0, string $note = '')
+        {
+            $order_id = $lp_order->get_id();
+            $order_reference = get_post_meta($order_id, '_wayforpay_order_reference', true);
+
+            if (empty($order_reference)) {
+                throw new Exception(__('This order has no WayForPay transaction reference to refund.', 'learnpress-wayforpay'));
+            }
+
+            if ($amount <= 0) {
+                $amount = (float) $lp_order->get_total();
+            }
+            $amount = round($amount, 2);
+
+            $currency = strtoupper((string) $lp_order->get_currency());
+            if (empty($currency)) {
+                $currency = strtoupper(learn_press_get_currency());
+            }
+
+            $fields = array(
+                'transactionType' => 'REFUND',
+                'merchantAccount' => $this->merchant_account,
+                'orderReference' => $order_reference,
+                'amount' => $amount,
+                'currency' => $currency,
+                'comment' => $note !== '' ? $note : __('Refund issued from LearnPress.', 'learnpress-wayforpay'),
+                'apiVersion' => 1,
+            );
+
+            // Per WayForPay docs: merchantAccount;orderReference;amount;currency
+            $sign_string = implode(
+                ';',
+                array($fields['merchantAccount'], $fields['orderReference'], $fields['amount'], $fields['currency'])
+            );
+            $fields['merchantSignature'] = hash_hmac('md5', $sign_string, $this->secret_key);
+
+            $this->log('Sending refund request for order: ' . $order_id . ' - ' . json_encode($fields));
+
+            $response = wp_remote_post(
+                'https://api.wayforpay.com/api',
+                array(
+                    'body' => json_encode($fields),
+                    'headers' => array('Content-Type' => 'application/json'),
+                    'timeout' => 60,
+                )
+            );
+
+            if (is_wp_error($response)) {
+                $this->log('Refund request failed for order: ' . $order_id . ' - ' . $response->get_error_message());
+                throw new Exception($response->get_error_message());
+            }
+
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+            $this->log('Refund response for order: ' . $order_id . ' - ' . wp_remote_retrieve_body($response));
+
+            if (empty($body) || !isset($body['transactionStatus'])) {
+                throw new Exception(__('Invalid response from WayForPay refund API.', 'learnpress-wayforpay'));
+            }
+
+            // Per WayForPay docs: merchantAccount;orderReference;transactionStatus;reasonCode
+            $expected_signature = hash_hmac(
+                'md5',
+                implode(
+                    ';',
+                    array(
+                        $body['merchantAccount'] ?? '',
+                        $body['orderReference'] ?? '',
+                        $body['transactionStatus'] ?? '',
+                        (string) ($body['reasonCode'] ?? ''),
+                    )
+                ),
+                $this->secret_key
+            );
+            $received_signature = (string) ($body['merchantSignature'] ?? '');
+
+            if ($received_signature !== '' && !hash_equals($expected_signature, $received_signature)) {
+                $this->log('Refund response signature mismatch for order: ' . $order_id);
+                throw new Exception(__('WayForPay refund response signature is invalid.', 'learnpress-wayforpay'));
+            }
+
+            if (!in_array($body['transactionStatus'], array('Refunded', 'Voided'), true)) {
+                $reason = $body['reason'] ?? __('Unknown reason', 'learnpress-wayforpay');
+                throw new Exception(
+                    sprintf(
+                        /* translators: 1: WayForPay status, 2: reason */
+                        __('WayForPay refund failed: %1$s (%2$s)', 'learnpress-wayforpay'),
+                        $body['transactionStatus'],
+                        $reason
+                    )
+                );
+            }
+
+            $this->save_transaction_meta($order_id, array(
+                'refund_status' => $body['transactionStatus'],
+                'refund_amount' => $amount,
+                'refund_date' => current_time('mysql'),
+            ));
+
+            $this->log('Refund succeeded for order: ' . $order_id . ' - amount: ' . $amount . ' ' . $currency);
         }
 
         /**
