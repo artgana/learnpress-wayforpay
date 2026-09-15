@@ -46,6 +46,14 @@ if (!class_exists('LP_Gateway_WayForPay')) {
         protected $debug_mode;
 
         /**
+         * Cached raw request body, so callback logging and callback parsing
+         * both read php://input exactly once instead of racing each other.
+         *
+         * @var string|null
+         */
+        protected $raw_input_cache;
+
+        /**
          * @var array Supported currencies
          * For example: array('UAH', 'USD', 'EUR')
          */
@@ -153,7 +161,7 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                     'id' => '[debug_mode]',
                     'type' => 'checkbox',
                     'default' => 'no',
-                    'desc' => __('Enable debug logging (logs will be saved to WordPress debug.log).', 'learnpress-wayforpay'),
+                    'desc' => __('Log every submit/callback request (headers, raw body, signature check, URLs sent to WayForPay) to wp-content/wayforpay-logs/wayforpay-YYYY-MM-DD.log. Enable only while diagnosing an issue.', 'learnpress-wayforpay'),
                 ),
                 array(
                     'type' => 'sectionend',
@@ -219,6 +227,57 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                     home_url('/')
                 ),
             );
+        }
+
+        /**
+         * Log that a submit/callback request reached this plugin's code at all,
+         * before any parsing or business logic runs. If debug mode is on and this
+         * line never shows up for an attempted payment, the request is being
+         * stopped upstream of WordPress (WAF/CDN/hosting firewall), not by
+         * anything in this plugin. Also registers a shutdown check so a PHP
+         * fatal partway through still leaves a trace instead of silence.
+         *
+         * @param string $type 'submit' or 'callback'
+         */
+        public function log_incoming_request($type)
+        {
+            $this->log('Incoming ' . $type . ' request', array(
+                'method' => $_SERVER['REQUEST_METHOD'] ?? '',
+                'uri' => $_SERVER['REQUEST_URI'] ?? '',
+                'host' => $_SERVER['HTTP_HOST'] ?? '',
+                'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? '',
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+                'content_type' => $_SERVER['CONTENT_TYPE'] ?? ($_SERVER['HTTP_CONTENT_TYPE'] ?? ''),
+                'content_length' => $_SERVER['CONTENT_LENGTH'] ?? '',
+                'get' => $_GET,
+                'post' => $_POST,
+                'raw_body' => $this->get_raw_input(),
+            ));
+
+            register_shutdown_function(function () use ($type) {
+                $error = error_get_last();
+                if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR), true)) {
+                    $this->log('FATAL during ' . $type . ' request', array(
+                        'message' => $error['message'],
+                        'file' => $error['file'],
+                        'line' => $error['line'],
+                    ));
+                }
+            });
+        }
+
+        /**
+         * Read the raw request body once and cache it, so callback logging and
+         * callback parsing don't each consume php://input independently.
+         *
+         * @return string
+         */
+        private function get_raw_input()
+        {
+            if ($this->raw_input_cache === null) {
+                $this->raw_input_cache = (string) file_get_contents('php://input');
+            }
+            return $this->raw_input_cache;
         }
 
         /**
@@ -360,7 +419,18 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                 'timestamp' => time(),
             ));
 
-            $this->log('Redirecting to WayForPay for order: ' . $order_id . ' - Reference: ' . $order_reference);
+            $this->log('Redirecting to WayForPay for order: ' . $order_id . ' - Reference: ' . $order_reference, array(
+                'merchantAccount' => $fields['merchantAccount'],
+                'merchantDomainName' => $fields['merchantDomainName'],
+                'returnUrl' => $fields['returnUrl'],
+                'serviceUrl' => $fields['serviceUrl'],
+                'amount' => $fields['amount'],
+                'currency' => $fields['currency'],
+                'productName' => $fields['productName'],
+                'productPrice' => $fields['productPrice'],
+                'productCount' => $fields['productCount'],
+                'orderTimeout' => $fields['orderTimeout'],
+            ));
 
             // Render Form
             ?>
@@ -510,15 +580,26 @@ if (!class_exists('LP_Gateway_WayForPay')) {
          */
         public function handle_wayforpay_callback()
         {
-            $data = json_decode(file_get_contents('php://input'), true);
+            $raw_body = $this->get_raw_input();
+            $data = json_decode($raw_body, true);
+            $source = $data ? 'json_body' : null;
 
             if (!$data) {
                 // Try POST fallback
                 $data = wp_unslash($_POST);
+                $source = !empty($data) ? 'post_fallback' : 'none';
             }
 
+            $this->log('Callback payload parsed', array(
+                'source' => $source,
+                'raw_body_length' => strlen($raw_body),
+                'parsed_keys' => is_array($data) ? array_keys($data) : null,
+            ));
+
             if (empty($data)) {
-                $this->log('No data received in callback');
+                $this->log('No data received in callback', array(
+                    'headers' => function_exists('getallheaders') ? getallheaders() : array(),
+                ));
                 wp_die('No data', 'WayForPay', array('response' => 400));
             }
 
@@ -550,6 +631,13 @@ if (!class_exists('LP_Gateway_WayForPay')) {
 
             $string = implode(';', $hash);
             $my_signature = hash_hmac('md5', $string, $this->secret_key);
+
+            $this->log('Callback signature check', array(
+                'sign_string' => $string,
+                'expected_signature' => $my_signature,
+                'received_signature' => (string) $received_signature,
+                'match' => hash_equals($my_signature, (string) $received_signature),
+            ));
 
             if (!hash_equals($my_signature, (string) $received_signature)) {
                 $this->log('Signature mismatch. Expected: ' . $my_signature . ', Received: ' . $received_signature);
@@ -767,15 +855,43 @@ if (!class_exists('LP_Gateway_WayForPay')) {
         }
 
         /**
-         * Log messages for debugging.
+         * Directory the debug log lives in, created with the same
+         * deny-all/silence protection as WordPress's own upload dirs.
+         *
+         * @return string
+         */
+        private static function log_dir()
+        {
+            $dir = WP_CONTENT_DIR . '/wayforpay-logs';
+            if (!file_exists($dir)) {
+                @mkdir($dir, 0755, true);
+                @file_put_contents($dir . '/.htaccess', "Require all denied\n");
+                @file_put_contents($dir . '/index.php', "<?php // silence is golden\n");
+            }
+            return $dir;
+        }
+
+        /**
+         * Log messages for debugging, to a dedicated per-day file under
+         * wp-content/wayforpay-logs/ rather than WordPress's general debug.log,
+         * so it stays legible and isn't lost among unrelated log noise.
          *
          * @param string $message
+         * @param array $context Optional structured data, JSON-encoded and appended.
          */
-        private function log($message)
+        private function log($message, $context = array())
         {
-            if ($this->debug_mode && function_exists('error_log')) {
-                error_log('[WayForPay] ' . $message);
+            if (!$this->debug_mode) {
+                return;
             }
+
+            $line = '[' . gmdate('Y-m-d H:i:s') . ' UTC] ' . $message;
+            if (!empty($context)) {
+                $line .= ' | ' . wp_json_encode($context);
+            }
+
+            $file = self::log_dir() . '/wayforpay-' . gmdate('Y-m-d') . '.log';
+            @error_log($line . "\n", 3, $file);
         }
     }
 }

@@ -48,12 +48,20 @@ The available options are:
   Time in seconds before the payment session expires on WayForPay (default: `49000`).
 
 - **Debug Mode**  
-  When enabled, the gateway writes debug messages to `debug.log` using `error_log()`.  
-  Only enable this in development or when troubleshooting.
+  When enabled, the gateway writes detailed debug logs to `wp-content/wayforpay-logs/wayforpay-YYYY-MM-DD.log` (a dedicated, `.htaccess`-protected log directory, separate from WordPress's own `debug.log`). This includes every submit/callback request as soon as it's received (headers, IP, raw body — so you can tell whether a request from WayForPay reached the site at all), the exact URLs/fields sent to WayForPay at checkout, and the full signature check on incoming callbacks.  
+  Only enable this in development or when troubleshooting, and disable it afterward since it logs full request payloads.
 
 ---
 
 ## Changelog
+
+### 4.2.0
+
+- **Feature:** overhauled Debug Mode into a dedicated diagnostic log at `wp-content/wayforpay-logs/wayforpay-YYYY-MM-DD.log`, instead of piggybacking on WordPress's general `debug.log`.
+- **Feature:** every submit/callback request is now logged the instant it's received — before any nonce, parsing, or signature logic runs — capturing method, host, IP, user agent, and raw body. This makes it possible to tell whether WayForPay's server-to-server callback ever reached WordPress at all, versus being blocked upstream (WAF/CDN/hosting firewall), which previously looked identical (an order stuck on "pending" with no trace in the logs either way).
+- **Feature:** the checkout redirect log now records the exact `merchantDomainName`, `returnUrl`, and `serviceUrl` sent to WayForPay for each order, to catch cases where the generated URLs don't match what's expected.
+- **Feature:** the callback handler now logs how the payload was parsed (JSON body vs. `$_POST` fallback vs. empty) and the full signature check (the exact string signed, expected signature, received signature, and match result), instead of only logging on mismatch.
+- **Hardening:** a shutdown-time check now logs PHP fatal errors that occur while handling a submit/callback request, so a crash mid-request leaves a trace instead of silently producing no log output.
 
 ### 4.1.0
 

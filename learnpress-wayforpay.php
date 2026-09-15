@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/artgana/learnpress-wayforpay
  * Description: WayForPay payment gateway for LearnPress, with coupon-aware checkout totals and refund support.
  * Author: artgana
- * Version: 4.1.0
+ * Version: 4.2.0
  * Text Domain: learnpress-wayforpay
  * Require_LP_Version: 4.0.0
  * Requires at least: 6.3
@@ -137,8 +137,22 @@ class LP_Addon_WayForPay_Preload
 			return;
 		}
 
+		$is_submit = isset($_GET['lp-wayforpay-submit']) && !empty($_GET['lp-wayforpay-submit']);
+		$is_callback = isset($_GET['lp-wayforpay-callback']);
+
+		if (!$is_submit && !$is_callback) {
+			return;
+		}
+
+		// Logged immediately, before any parsing/nonce/signature checks, so that
+		// with debug mode on we can tell whether a request reached WordPress at
+		// all - if this line never appears for an attempted payment, something
+		// upstream (WAF/CDN/hosting firewall) is dropping it, not this plugin.
+		$gateway = new LP_Gateway_WayForPay();
+		$gateway->log_incoming_request($is_submit ? 'submit' : 'callback');
+
 		// Handle Submit
-		if (isset($_GET['lp-wayforpay-submit']) && !empty($_GET['lp-wayforpay-submit'])) {
+		if ($is_submit) {
 			$order_id = absint($_GET['lp-wayforpay-submit']);
 			$nonce = sanitize_text_field($_GET['nonce'] ?? '');
 
@@ -150,14 +164,12 @@ class LP_Addon_WayForPay_Preload
 				wp_die(__('Missing security token', 'learnpress-wayforpay'), 'Security Error', array('response' => 403));
 			}
 
-			$gateway = new LP_Gateway_WayForPay();
 			$gateway->process_wayforpay_submit($order_id, $nonce);
 			exit;
 		}
 
 		// Handle Callback
-		if (isset($_GET['lp-wayforpay-callback'])) {
-			$gateway = new LP_Gateway_WayForPay();
+		if ($is_callback) {
 			$gateway->handle_wayforpay_callback();
 			exit;
 		}
