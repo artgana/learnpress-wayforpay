@@ -281,6 +281,42 @@ if (!class_exists('LP_Gateway_WayForPay')) {
         }
 
         /**
+         * Receive the debug-only client-side beacon from the redirect page (see
+         * process_wayforpay_submit()'s inline script). No nonce/auth check - this
+         * only ever runs anything when Debug Mode is on, and it does nothing but
+         * write a log line, so there's nothing here worth protecting; when Debug
+         * Mode is off it responds without logging, so a stray/replayed beacon
+         * can't be used to grow the log file.
+         */
+        public function handle_client_log()
+        {
+            header('Content-Type: application/json');
+
+            if (!$this->debug_mode) {
+                echo json_encode(array('ok' => false, 'reason' => 'debug mode off'));
+                exit;
+            }
+
+            $data = json_decode($this->get_raw_input(), true);
+            if (!is_array($data)) {
+                $data = array();
+            }
+
+            $this->log('Client-side event on redirect page', array(
+                'event' => isset($data['event']) ? sanitize_text_field($data['event']) : null,
+                'order_id' => isset($data['orderId']) ? absint($data['orderId']) : null,
+                'message' => isset($data['message']) ? sanitize_text_field($data['message']) : null,
+                'filename' => isset($data['filename']) ? sanitize_text_field($data['filename']) : null,
+                'lineno' => isset($data['lineno']) ? absint($data['lineno']) : null,
+                'violated_directive' => isset($data['violatedDirective']) ? sanitize_text_field($data['violatedDirective']) : null,
+                'blocked_uri' => isset($data['blockedURI']) ? sanitize_text_field($data['blockedURI']) : null,
+            ));
+
+            echo json_encode(array('ok' => true));
+            exit;
+        }
+
+        /**
          * Handle the intermediate page generation using POST method to WayForPay.
          *
          * @param int $order_id
@@ -430,6 +466,11 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                 'productPrice' => $fields['productPrice'],
                 'productCount' => $fields['productCount'],
                 'orderTimeout' => $fields['orderTimeout'],
+                // Distinguishes "logged into an existing account" from "account just
+                // created during this checkout" without having to guess from timing -
+                // user_registered vs. now, in seconds, is ~0 for a brand new signup.
+                'user_id' => $user ? $user->ID : null,
+                'account_age_seconds' => $user ? ( time() - strtotime( $user->user_registered . ' UTC' ) ) : null,
             ));
 
             // Render Form
@@ -529,6 +570,43 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                         document.getElementById('error-message').style.display = 'block';
                     }, 5000);
                 </script>
+                <?php if ($this->debug_mode): ?>
+                <script type="text/javascript">
+                    // Debug Mode only. Our own server-side log can prove this page rendered
+                    // with valid-looking fields, but not whether the browser actually reached
+                    // WayForPay afterward - a JS error or a security-plugin CSP could silently
+                    // stop the auto-submit before it leaves this page. This reports that part
+                    // back to the same debug log via a tiny beacon, so a failed attempt shows
+                    // whether the submit fired, threw, was blocked, or the page ever unloaded.
+                    (function () {
+                        var logUrl = <?php echo wp_json_encode( add_query_arg( 'lp-wayforpay-client-log', '1', home_url( '/' ) ) ); ?>;
+                        function beacon(event, extra) {
+                            try {
+                                var payload = JSON.stringify(Object.assign({event: event, orderId: <?php echo (int) $order_id; ?>}, extra || {}));
+                                if (navigator.sendBeacon) {
+                                    navigator.sendBeacon(logUrl, new Blob([payload], {type: 'text/plain'}));
+                                } else {
+                                    fetch(logUrl, {method: 'POST', body: payload, keepalive: true});
+                                }
+                            } catch (e) {}
+                        }
+                        window.addEventListener('error', function (e) {
+                            beacon('js_error', {message: e.message, filename: e.filename, lineno: e.lineno});
+                        });
+                        window.addEventListener('securitypolicyviolation', function (e) {
+                            beacon('csp_violation', {violatedDirective: e.violatedDirective, blockedURI: e.blockedURI});
+                        });
+                        window.addEventListener('pagehide', function () {
+                            beacon('page_hidden');
+                        });
+                        beacon('page_loaded');
+                        var originalTimeout = window.setTimeout;
+                        originalTimeout(function () {
+                            beacon('submit_attempted');
+                        }, 900);
+                    })();
+                </script>
+                <?php endif; ?>
             </div>
             </body>
 

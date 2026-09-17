@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/artgana/learnpress-wayforpay
  * Description: WayForPay payment gateway for LearnPress, with coupon-aware checkout totals and refund support.
  * Author: artgana
- * Version: 4.2.0
+ * Version: 4.3.0
  * Text Domain: learnpress-wayforpay
  * Require_LP_Version: 4.0.0
  * Requires at least: 6.3
@@ -139,16 +139,28 @@ class LP_Addon_WayForPay_Preload
 
 		$is_submit = isset($_GET['lp-wayforpay-submit']) && !empty($_GET['lp-wayforpay-submit']);
 		$is_callback = isset($_GET['lp-wayforpay-callback']);
+		$is_client_log = isset($_GET['lp-wayforpay-client-log']);
 
-		if (!$is_submit && !$is_callback) {
+		if (!$is_submit && !$is_callback && !$is_client_log) {
 			return;
+		}
+
+		$gateway = new LP_Gateway_WayForPay();
+
+		// The client-log beacon is debug-only telemetry from the redirect page's
+		// own JS (see process_wayforpay_submit()) - it doesn't need the "request
+		// reached WordPress at all" logging below, since the whole point of it is
+		// answering a question upstream-WAF logging can't: whether the browser's
+		// auto-submit actually fired/completed after this point.
+		if ($is_client_log) {
+			$gateway->handle_client_log();
+			exit;
 		}
 
 		// Logged immediately, before any parsing/nonce/signature checks, so that
 		// with debug mode on we can tell whether a request reached WordPress at
 		// all - if this line never appears for an attempted payment, something
 		// upstream (WAF/CDN/hosting firewall) is dropping it, not this plugin.
-		$gateway = new LP_Gateway_WayForPay();
 		$gateway->log_incoming_request($is_submit ? 'submit' : 'callback');
 
 		// Handle Submit

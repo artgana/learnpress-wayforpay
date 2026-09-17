@@ -55,6 +55,11 @@ The available options are:
 
 ## Changelog
 
+### 4.3.0
+
+- **Feature:** the redirect log now records `user_id` and `account_age_seconds` for the order's owner, so a log entry can be told apart as "existing account" vs. "account just created during this checkout" without guessing from timing.
+- **Feature:** the "Redirecting to WayForPay..." intermediate page now carries a Debug-Mode-only client-side beacon (`navigator.sendBeacon`, falling back to `fetch`) that reports back to the same debug log whether the page loaded, whether the auto-submit actually fired, whether a JS error interrupted it, whether a Content-Security-Policy blocked it (`securitypolicyviolation`), and whether the page ever actually unloaded (`pagehide`). Our own server-side logging can prove this page rendered with valid fields, but not whether the browser went on to actually reach WayForPay — a security plugin's CSP or a JS error could silently stop the auto-submit before it leaves this page, and this is the only way to tell that apart from WayForPay itself declining the request. The beacon endpoint (`?lp-wayforpay-client-log=1`) responds without logging when Debug Mode is off, so it can't be used to grow the log file outside of an active debugging session.
+
 ### 4.2.0
 
 - **Feature:** overhauled Debug Mode into a dedicated diagnostic log at `wp-content/wayforpay-logs/wayforpay-YYYY-MM-DD.log`, instead of piggybacking on WordPress's general `debug.log`.
