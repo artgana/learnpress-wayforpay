@@ -55,6 +55,11 @@ The available options are:
 
 ## Changelog
 
+### 4.3.1
+
+- **Fix:** the 4.3.0 `user_id`/`account_age_seconds` debug fields read `->ID`/`->user_registered` directly off `LP_Order::get_user()`'s return value. That's an `LP_User`/`LP_User_Guest` wrapper (see `learn_press_get_user()`), not a raw `WP_User` - it has no such properties, so LearnPress's data-object `__get()` silently returned `''`/falsy instead of erroring, making the field worthless (always logged as `""`/`0`). Replaced with `LP_Order::get_user_id()` (the order's own stored owner, independent of whether that id resolves to anything) plus `get_userdata()` for the account-age calculation only when it's a real, existing account.
+- **Feature:** the redirect log now also records `clientEmail`, `clientFirstName`, `clientLastName` - the exact values sent to WayForPay for the customer - alongside the new `order_user_id`. Suspected cause of the "new account during checkout" failure: `LP_Order::get_user_email()` falls back to a separate `checkout_email` order-meta field whenever the order has no real account attached (`order_user_id <= 0`), and that meta is only ever populated by LearnPress's dedicated *guest*-checkout path - not by "register a new account and check out in one step." If that's what's happening, `order_user_id` will log as `0`/`-1` and `clientEmail` will log empty for a broken new-account attempt, which WayForPay very plausibly rejects outright before ever showing a card form (no separate error surfaced to us because no transaction attempt is ever created on WayForPay's side to report back on).
+
 ### 4.3.0
 
 - **Feature:** the redirect log now records `user_id` and `account_age_seconds` for the order's owner, so a log entry can be told apart as "existing account" vs. "account just created during this checkout" without guessing from timing.

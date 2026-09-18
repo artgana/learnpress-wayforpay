@@ -455,6 +455,17 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                 'timestamp' => time(),
             ));
 
+            // order_user_id is the order's own stored owner (-1/0 both effectively
+            // mean "no real account attached" - LP_Order::get_user_id()'s default is
+            // -1, and 0 is what a guest checkout stores), independent of whatever
+            // $user above resolved to. $user itself is an LP_User/LP_User_Guest
+            // wrapper (see LP_Order::get_user() / learn_press_get_user()), not a raw
+            // WP_User, so it has no ->ID or ->user_registered properties - reading
+            // those silently returned '' via LP's data-object __get() rather than
+            // erroring, which is what previously made this log field worthless.
+            $order_user_id = (int) $order->get_user_id();
+            $wp_userdata = $order_user_id > 0 ? get_userdata( $order_user_id ) : false;
+
             $this->log('Redirecting to WayForPay for order: ' . $order_id . ' - Reference: ' . $order_reference, array(
                 'merchantAccount' => $fields['merchantAccount'],
                 'merchantDomainName' => $fields['merchantDomainName'],
@@ -466,11 +477,16 @@ if (!class_exists('LP_Gateway_WayForPay')) {
                 'productPrice' => $fields['productPrice'],
                 'productCount' => $fields['productCount'],
                 'orderTimeout' => $fields['orderTimeout'],
-                // Distinguishes "logged into an existing account" from "account just
-                // created during this checkout" without having to guess from timing -
-                // user_registered vs. now, in seconds, is ~0 for a brand new signup.
-                'user_id' => $user ? $user->ID : null,
-                'account_age_seconds' => $user ? ( time() - strtotime( $user->user_registered . ' UTC' ) ) : null,
+                'clientEmail' => $fields['clientEmail'],
+                'clientFirstName' => $fields['clientFirstName'],
+                'clientLastName' => $fields['clientLastName'],
+                // order_user_id <= 0 means the order has no real account attached at
+                // all (guest-owned) at the moment we build the WayForPay request -
+                // distinguishes that from "logged into an existing account" (a real,
+                // pre-existing WP user) vs. "account just created during this
+                // checkout" (account_age_seconds near 0).
+                'order_user_id' => $order_user_id,
+                'account_age_seconds' => $wp_userdata ? ( time() - strtotime( $wp_userdata->user_registered . ' UTC' ) ) : null,
             ));
 
             // Render Form
